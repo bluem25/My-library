@@ -489,7 +489,7 @@ function sortList(list){
 function filterList(list){
   return list.filter(b=>{
     if(statusF!=='all'&&b.status!==statusF)return false;
-    if(query){const hay=[b.title,b.subtitle,(b.authors||[]).join(' '),(b.genres||[]).join(' '),b.series,b.publisher,b.isbn13,b.notes,(b.shelves||[]).map(id=>(shelf(id)||{}).name).join(' ')].join(' ').toLowerCase();if(!hay.includes(query))return false}
+    if(query){const hay=[b.title,b.subtitle,(b.authors||[]).join(' '),(b.genres||[]).join(' '),b.series,b.publisher,b.isbn13,b.notes,b.romanized,(b.shelves||[]).map(id=>(shelf(id)||{}).name).join(' ')].join(' ').toLowerCase();if(!hay.includes(query))return false}
     return true});
 }
 function toolsHTML(base=books()){return `<div class="tools"><input id="q" placeholder="Search title, author, series…" dir="auto"><select id="sort">${[['added','Newest'],['title','Title'],['author','Author'],['series','Series'],['rating','Rating'],['year','Year']].map(([k,l])=>`<option value="${k}" ${sortBy===k?'selected':''}>${l}</option>`).join('')}</select></div>
@@ -532,6 +532,73 @@ const LANGS={en:'English',ar:'Arabic',fr:'French',es:'Spanish',de:'German',it:'I
 async function getJSON(u,ms=9000){const c=new AbortController();const t=setTimeout(()=>c.abort(),ms);try{const r=await fetch(u,{signal:c.signal});if(!r.ok)return null;return await r.json()}catch(e){return null}finally{clearTimeout(t)}}
 function stripHtml(h){const d=document.createElement('div');d.innerHTML=h||'';return (d.textContent||'').trim()}
 function gCover(u){return u?u.replace(/^http:/,'https:').replace(/&edge=curl/,''):''}
+/* ---- Arabic: library catalogues store Arabic books in Latin "library spelling" (ALA-LC); convert back ---- */
+const ROMAN_RE=/[āīūḥṣḍṭẓʻʿʼʾ]|\b(al|wa|bi|li)-/i;
+function toArabic(text){
+  if(!text)return text;
+  const C=[['sh','ش'],['th','ث'],['kh','خ'],['dh','ذ'],['gh','غ'],['b','ب'],['t','ت'],['j','ج'],['ḥ','ح'],['d','د'],['r','ر'],['z','ز'],['s','س'],['ṣ','ص'],['ḍ','ض'],['ṭ','ط'],['ẓ','ظ'],['f','ف'],['q','ق'],['k','ك'],['l','ل'],['m','م'],['n','ن'],['h','ه'],['w','و'],['y','ي'],['ʻ','ع'],['ʿ','ع'],['‘','ع'],['p','ب'],['v','ف'],['g','ج'],['c','ك'],['x','كس']];
+  const SPECIAL={'allāh':'الله','ibn':'ابن','bin':'بن','bint':'بنت','ism':'اسم','imraʼah':'امرأة','ithnān':'اثنان','ithnatān':'اثنتان','ʻalá':'على','ilá':'إلى','fī':'في','min':'من','ʻan':'عن','hādhā':'هذا','hādhihi':'هذه','dhālika':'ذلك','allatī':'التي','alladhī':'الذي','lākin':'لكن','ḥattá':'حتى','maʻa':'مع','ʻamr':'عمرو','muṣṭafá':'مصطفى','mūsá':'موسى','ʻīsá':'عيسى','yaḥyá':'يحيى','laylá':'ليلى','salmá':'سلمى','raḥmān':'رحمن'};
+  const PREF={wa:'و',fa:'ف',bi:'ب',li:'ل',ka:'ك',al:'ال',il:'ال',el:'ال'};
+  const word=(w,first)=>{
+    const lw=w.toLowerCase().replace(/[ʹ′']/g,'').replace(/ʾ/g,'ʼ').replace(/[’]/g,'ʼ');
+    if(SPECIAL[lw])return SPECIAL[lw];
+    let s=lw,out='';
+    // word-final tāʼ marbūṭah
+    s=s.replace(/([^ā])(ah|at)$/,'$1ة').replace(/^(.)(ah)$/,'$1ة');
+    for(let i=0;i<s.length;){
+      const ch=s[i],prev=out.slice(-1);
+      if(ch==='ة'){out+='ة';i++;continue}
+      if(ch==='ā'){out+=i===0?'آ':'ا';i++;continue}
+      if(ch==='á'){out+='ى';i++;continue}
+      if(ch==='ī'){out+=i===0?'إي':'ي';i++;continue}
+      if(ch==='ū'){out+=i===0?'أو':'و';i++;continue}
+      if('aiueoé'.includes(ch)){ if(i===0)out+=ch==='i'||ch==='e'?'إ':'أ'; i++;continue}
+      if(ch==='ʼ'){const pv=s[i-1]||'',nx=s[i+1]||'';out+=(pv==='i'||pv==='ī'||nx==='i')?'ئ':(pv==='u'||pv==='ū'||nx==='u')?'ؤ':(i===s.length-1?'ء':(pv==='a'||nx==='a'||nx==='ā')?'أ':'ء');i++;continue}
+      if(ch==='y'&&s[i-1]==='ī'){i++;continue}
+      let m=C.find(([r])=>s.startsWith(r,i));
+      if(m){const ar=m[1];if(!(ar===prev&&ar.length===1))out+=ar;else if(s[i-1]!==s[i]){out+=ar}i+=m[0].length;continue}
+      out+=ch;i++;
+    }
+    return out;
+  };
+  const seg=(tok,first)=>{
+    if(!/[a-zāīūḥṣḍṭẓʻʿʼʾá]/i.test(tok))return tok;
+    const parts=tok.split('-');let res='';
+    parts.forEach((p,k)=>{const lp=p.toLowerCase();
+      if(k<parts.length-1&&PREF[lp]!==undefined){let pr=PREF[lp];if(pr==='ال'&&res.endsWith('ل'))pr='ل';res+=pr;return}
+      let w=word(p,first&&k===0);
+      if(res.endsWith('ال')||res.endsWith('لل')){/* keep hamza seat after al- */}
+      res+=w;});
+    return res;
+  };
+  return text.split(/(\s+|[,:;()"“”«»\/])/).map((t,i)=>seg(t,i===0)).join('').replace(/\?/g,'؟').replace(/,/g,'،').replace(/;/g,'؛');
+}
+
+
+const isRoman=t=>/[āīūḥṣḍṭẓʻʿʼʾá]/.test(t||'');
+function arabize(b){
+  const romanTitle=[b.title,b.subtitle].join(' ');
+  if(!(isRoman(romanTitle)||isRoman((b.authors||[]).join(' '))))return false;
+  b.romanized=[b.title,b.subtitle,(b.authors||[]).join(', ')].filter(Boolean).join(' · ');
+  for(const k of ['title','subtitle','publisher','series'])if(b[k]&&isRoman(b[k])||(b[k]&&/^[A-Za-z\s\-'.]+$/.test(b[k])&&isRoman(romanTitle)&&k!=='publisher'))b[k]=toArabic(b[k]);
+  if(b.publisher&&isRoman(b.publisher))b.publisher=toArabic(b.publisher);
+  b.authors=(b.authors||[]).map(a=>isRoman(a)||/^[A-Za-z\s.\-]+$/.test(a)&&isRoman(romanTitle)?toArabic(a.replace(/,\s*\d.*$/,'')):a);
+  b.language='Arabic';return true;
+}
+
+/* ---- covers: try several sources, keep the first real image ---- */
+function testImg(u,ms=7000){return new Promise(res=>{if(!u)return res(false);const i=new Image();const t=setTimeout(()=>{i.src='';res(false)},ms);
+  i.onload=()=>{clearTimeout(t);res(i.naturalWidth>=60&&i.naturalHeight>=80)};i.onerror=()=>{clearTimeout(t);res(false)};i.referrerPolicy='no-referrer';i.src=u})}
+async function findCover(b,first){
+  const i13=b.isbn13,i10=b.isbn10||to10(i13||'');
+  const list=[first,i13&&`https://covers.openlibrary.org/b/isbn/${i13}-L.jpg?default=false`,i10&&`https://images-na.ssl-images-amazon.com/images/P/${i10}.01.LZZZZZZZ.jpg`,i10&&`https://m.media-amazon.com/images/P/${i10}.01._SCLZZZZZZZ_.jpg`].filter(Boolean);
+  for(const u of list)if(await testImg(u))return u;
+  // search Google Books by title + author (finds Arabic editions listed without ISBN)
+  if(b.title){const q=encodeURIComponent(`intitle:${b.title}`+((b.authors||[])[0]?` inauthor:${b.authors[0]}`:''));
+    const g=await getJSON(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=5`);
+    for(const it of (g&&g.items)||[]){const il=it.volumeInfo&&it.volumeInfo.imageLinks;const u=gCover(il&&(il.thumbnail||il.smallThumbnail));if(u&&await testImg(u))return u}}
+  return '';
+}
 async function lookupBook(isbn){
   const [g,ol]=await Promise.all([getJSON(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`),getJSON(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&jscmd=data&format=json`)]);
   const r={};const it=g&&g.items&&g.items[0];const vi=it&&it.volumeInfo;const o=ol&&ol['ISBN:'+isbn];
@@ -546,14 +613,24 @@ async function lookupBook(isbn){
     if(ed){if(ed.physical_format)r.format=ed.physical_format;if(ed.series&&ed.series[0])r.series=String(ed.series[0]).replace(/\s*;.*$/,'');
       if(!r.language&&ed.languages&&ed.languages[0])r.language=LANGS[ed.languages[0].key.split('/').pop()]||'';
       if(!r.description&&ed.works&&ed.works[0]){const wk=await getJSON(`https://openlibrary.org${ed.works[0].key}.json`);const d=wk&&wk.description;r.description=typeof d==='string'?d:(d&&d.value)||''}}}
-  r.found=!!(vi||o);return r;
+  r.found=!!(vi||o);
+  if(r.found){r.isbn13=isbn;r.isbn10=to10(isbn);
+    if(arabize(r)){ // look for the Arabic edition on Google Books for a description / genres
+      const q=encodeURIComponent(`intitle:${r.title}`+((r.authors||[])[0]?` inauthor:${r.authors[0]}`:''));
+      const g2=await getJSON(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=3`);const v2=g2&&g2.items&&g2.items[0]&&g2.items[0].volumeInfo;
+      if(v2){if(!r.description)r.description=stripHtml(v2.description);if(!r.pages&&v2.pageCount)r.pages=v2.pageCount;if(!(r.genres||[]).length&&v2.categories)r.genres=v2.categories}
+      r.arabized=true;}
+    r.cover=await findCover(r,r.cover);
+  }
+  return r;
 }
 
 /* =============== book model & form =============== */
 let draft=null;
 function blank(){return{id:'',isbn13:'',isbn10:'',title:'',subtitle:'',authors:[],translator:'',publisher:'',year:'',pages:'',currentPage:'',language:'',format:'',series:'',seriesNumber:'',genres:[],description:'',cover:'',status:'toread',rating:0,shelves:[],started:'',finished:'',quotes:[],notes:'',location:'',source:'',addedAt:Date.now()}}
 function applyLookup(r){if(!r||!r.found)return;
-  for(const k of ['title','subtitle','publisher','language','format','series','description','cover'])if(r[k])draft[k]=String(r[k]);
+  for(const k of ['title','subtitle','publisher','language','format','series','description','cover','romanized'])if(r[k])draft[k]=String(r[k]);
+  if(r.arabized)draft._arabized=true;
   if(r.year)draft.year=String(r.year);if(r.pages)draft.pages=String(r.pages);
   if((r.authors||[]).length)draft.authors=r.authors.map(String);if((r.genres||[]).length)draft.genres=r.genres.map(String);
   draft.shelves=autoShelves(draft);
@@ -562,8 +639,10 @@ function openForm(note='',editing=false){
   const d=draft;
   openSheet(`<div class="pad">${head(editing?'Edit book':'Add book')}
   ${note?`<div class="msg ${/no |couldn/i.test(note)?'err':''}">${esc(note)}</div>`:''}
+  ${d._arabized?`<div class="msg">The catalogue spelled this book in English letters, so it was converted to Arabic automatically — please check the title and author.</div>`:''}
+  ${isRoman([d.title,d.subtitle,d.authors.join(' ')].join(' '))?`<button class="btn gold sm" id="toAr" style="width:100%;margin-bottom:8px">ع Convert to Arabic letters</button>`:''}
   <div style="display:flex;gap:16px;align-items:flex-end"><div style="width:96px">${cover(d)}</div>
-    <div style="flex:1"><button class="btn gh sm" id="coverBtn">📷 ${d.cover?'Change':'Add'} cover</button>${d.cover?'<button class="btn gh sm" id="rmCover" style="margin-top:6px">Remove cover</button>':''}<div class="pct">${d.isbn13?'ISBN '+esc(d.isbn13):'No ISBN'}</div></div></div>
+    <div style="flex:1"><button class="btn gh sm" id="coverBtn">📷 ${d.cover?'Change':'Add'} cover</button>${d.cover?'<button class="btn gh sm" id="rmCover" style="margin-top:6px">Remove cover</button>':''}${d.cover?'':'<button class="btn gh sm" id="findCv" style="margin-top:6px">🔎 Find cover online</button>'}<div class="pct">${d.isbn13?'ISBN '+esc(d.isbn13):'No ISBN'}</div></div></div>
   <label class="f">Title</label><input class="in" id="f_title" dir="auto" value="${esc(d.title)}">
   <label class="f">Subtitle</label><input class="in" id="f_subtitle" dir="auto" value="${esc(d.subtitle)}">
   <label class="f">Author(s) — separate with commas</label><input class="in" id="f_authors" dir="auto" value="${esc(d.authors.join(', '))}">
@@ -589,12 +668,14 @@ function openForm(note='',editing=false){
   $('#f_status').onclick=e=>{const b=e.target.closest('button');if(!b)return;d.status=b.dataset.s;[...$('#f_status').children].forEach(x=>x.classList.toggle('on',x===b));if(d.status==='reading'&&!$('#f_started').value)$('#f_started').value=today();if(d.status==='read'&&!$('#f_finished').value)$('#f_finished').value=today()};
   $('#f_rating').onclick=e=>{const b=e.target.closest('button');if(!b)return;const r=+b.dataset.r;d.rating=d.rating===r?0:r;[...$('#f_rating').children].forEach((x,i)=>x.classList.toggle('on',i<d.rating))};
   $('#coverBtn').onclick=()=>{collect();$('#coverFile').value='';$('#coverFile').click()};
+  if($('#toAr'))$('#toAr').onclick=()=>{collect();arabize(d);d._arabized=true;d.shelves=[...new Set([...d.shelves,'arabic'])];openForm(note,editing)};
+  if($('#findCv'))$('#findCv').onclick=async()=>{collect();$('#findCv').textContent='Searching…';const u=await findCover(d,'');if(u){d.cover=u;openForm(note,editing)}else{$('#findCv').textContent='No cover found — add a photo';toast('No cover online — tap Add cover to take a photo')}};
   if($('#rmCover'))$('#rmCover').onclick=()=>{collect();d.cover='';openForm(note,editing)};
   $('#saveBtn').onclick=async()=>{collect();if(!d.title){toast('Add a title first');return}
     if(d.isbn13){const n=normIsbn(d.isbn13);if(n){d.isbn13=n;d.isbn10=to10(n)}}
     if(isMine(d)&&!d.shelves.includes('mine'))d.shelves.push('mine');
     if(!d.id)d.id=(d.isbn13||'b')+'-'+Date.now().toString(36);
-    const saved=JSON.parse(JSON.stringify(d));closeSheet();await store.put(saved);toast(editing?'Saved':`Added “${saved.title}”`)};
+    delete d._arabized;const saved=JSON.parse(JSON.stringify(d));closeSheet();await store.put(saved);toast(editing?'Saved':`Added “${saved.title}”`)};
 }
 function collect(){const d=draft,v=id=>{const e=$('#f_'+id);return e?e.value.trim():''};
   for(const k of ['title','subtitle','series','seriesNumber','year','pages','currentPage','language','format','publisher','translator','description','isbn13','started','finished','location','source','notes'])if($('#f_'+k))d[k]=v(k);
@@ -625,7 +706,7 @@ function openDetail(id){
     ${b.status==='reading'?`<div class="progline"><input class="in" id="pg" inputmode="numeric" placeholder="Page" value="${esc(b.currentPage||'')}"><span class="pct" style="margin:0">/ ${esc(b.pages||'?')}</span></div>`:''}</div>
     ${b.status==='reading'&&p?`<div class="bar" style="margin-top:10px"><i style="width:${p}%"></i></div><div class="pct">${p}% read</div>`:''}
     ${b.description?`<div class="sec">About</div><div class="desc clip" id="desc" dir="auto">${esc(b.description)}</div><button class="more" id="moreD">Read more</button>`:''}
-    <dl class="kv">${row('Publisher',b.publisher)}${row('Published',b.year)}${row('Pages',b.pages)}${row('Language',b.language)}${row('Format',b.format)}${row('Translator',b.translator)}${row('Genres',(b.genres||[]).join(', '))}${row('Where it sits',b.location)}${row('Got it from',b.source)}${row('Started',b.started)}${row('Finished',b.finished)}${row('ISBN',b.isbn13)}${row('Added',new Date(b.addedAt||Date.now()).toLocaleDateString())}</dl>
+    <dl class="kv">${row('Publisher',b.publisher)}${row('Published',b.year)}${row('Pages',b.pages)}${row('Language',b.language)}${row('Format',b.format)}${row('Translator',b.translator)}${row('Genres',(b.genres||[]).join(', '))}${row('Where it sits',b.location)}${row('Got it from',b.source)}${row('Started',b.started)}${row('Finished',b.finished)}${row('Library spelling',b.romanized)}${row('ISBN',b.isbn13)}${row('Added',new Date(b.addedAt||Date.now()).toLocaleDateString())}</dl>
     ${b.notes?`<div class="sec">My notes</div><div class="desc" dir="auto">${esc(b.notes)}</div>`:''}
     <div class="sec">Favourite quotes</div>
     <div id="quotes">${(b.quotes||[]).map((q,i)=>`<div class="quote" dir="auto">${esc(q)}<button data-qi="${i}">✕</button></div>`).join('')}</div>
@@ -751,7 +832,7 @@ async function onScanned(isbn){
   draft=blank();draft.isbn13=isbn;draft.isbn10=to10(isbn);
   const r=await lookupBook(isbn);applyLookup(r);
   if(!r.found||!draft.title){closeScanner();openForm('No details found online for ISBN '+isbn+'. Add them yourself and snap the cover.');return}
-  if(settings.autoAdd){draft.id=isbn+'-'+Date.now().toString(36);const b=JSON.parse(JSON.stringify(draft));await store.put(b);showLast(b,'Added ✓');$('#hint').textContent='Ready for the next book'}
+  if(settings.autoAdd){draft.id=isbn+'-'+Date.now().toString(36);delete draft._arabized;const b=JSON.parse(JSON.stringify(draft));await store.put(b);showLast(b,'Added ✓');$('#hint').textContent='Ready for the next book'}
   else{closeScanner();openForm()}
 }
 function openIsbn(){
@@ -770,7 +851,16 @@ function openIsbn(){
 
 /* =============== start =============== */
 loadSettings();
-store.init().then(render);
+store.init().then(async()=>{render();
+  for(const b of books()){
+    let ch=false;
+    if(!b.arFixed&&isRoman([b.title,b.subtitle,(b.authors||[]).join(' ')].join(' '))){arabize(b);b.shelves=[...new Set([...(b.shelves||[]),'arabic'])];ch=true}
+    b.arFixed=true;
+    if(!b.cover&&!b.coverTried&&navigator.onLine!==false){b.coverTried=true;ch=true;const u=await findCover(b,'');if(u)b.cover=u}
+    if(ch)await store.put(b,true);
+  }
+  render();
+});
 render();
 </script>
 </body>
